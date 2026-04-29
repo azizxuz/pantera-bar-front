@@ -1,6 +1,6 @@
 // src/lib/apiClient.ts
 
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+const API = import.meta.env.VITE_API_URL ?? "http://167.86.67.203:3000";
 
 function getToken() {
   return localStorage.getItem("token");
