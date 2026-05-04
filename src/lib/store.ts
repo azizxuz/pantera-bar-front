@@ -5,7 +5,6 @@ import { io, Socket } from "socket.io-client";
 import type { Computer, Order, OrderItem, OrderStatus, Product } from "./types";
 import { toast } from "sonner";
 
-// Supabasedagi mapper logika saqlanadi — faqat manba o'zgaradi
 const mapProduct = (r: any): Product => ({
   id: r.id,
   name: r.name,
@@ -16,6 +15,7 @@ const mapProduct = (r: any): Product => ({
   category: r.category ?? "other",
   createdAt: r.createdAt ?? r.created_at,
 });
+
 const mapComputer = (r: any): Computer => ({
   id: r.id,
   number: r.number,
@@ -24,6 +24,7 @@ const mapComputer = (r: any): Computer => ({
   enabled: r.enabled,
   createdAt: r.createdAt ?? r.created_at,
 });
+
 const mapOrder = (r: any, items: OrderItem[] = []): Order => ({
   id: r.id,
   computerId: r.computerId ?? r.computer_id,
@@ -72,8 +73,6 @@ export const useStore = create<State>()((set, get) => ({
   orders: [],
 
   // ─── AUTH ────────────────────────────────────────────────────────────
-  // OLDIN: supabase.auth.getSession() + onAuthStateChange
-  // KEYIN: token localStorage da, mavjudligi = authed
   init: async () => {
     const token = localStorage.getItem("token");
     set({ isAuthed: !!token });
@@ -86,21 +85,56 @@ export const useStore = create<State>()((set, get) => ({
     set({ loading: false });
 
     // ─── REALTIME ────────────────────────────────────────────────────
-    // OLDIN: supabase.channel().on('postgres_changes', ...).subscribe()
-    // KEYIN: socket.io events
     if (!socket) {
-      socket = io(import.meta.env.VITE_API_URL ?? "http://localhost:3000", {
-        auth: { token },
-      });
+      // ✅ TUZATILDI: /realtime namespace qo'shildi
+      socket = io(
+        `${import.meta.env.VITE_API_URL ?? "http://localhost:3000"}/realtime`,
+        { auth: { token } }
+      );
 
+      // Mahsulot va kompyuter o'zgarishlari
       socket.on("products:changed", () => refetch(set, "products"));
       socket.on("computers:changed", () => refetch(set, "computers"));
-      socket.on("orders:changed", () => refetch(set, "orders"));
+
+      // ✅ TUZATILDI: orders:new → order:new (backend bilan mos)
+      socket.on("order:new", (order: any) => {
+        const mapped = mapOrder(order);
+
+        // Store ga qo'shamiz
+        set((s) => ({
+          orders: [mapped, ...s.orders],
+        }));
+
+        // Faqat admin ko'radi
+        if (get().isAuthed) {
+          toast.info(
+            `🆕 Yangi buyurtma — Kompyuter #${mapped.computerNumber}`,
+            {
+              description: mapped.items
+                .map((i) => `${i.name} ×${i.quantity}`)
+                .join(", "),
+              duration: 8000,
+              action: {
+                label: "Ko'rish",
+                onClick: () => {
+                  window.location.href = "/admin/orders";
+                },
+              },
+            }
+          );
+        }
+      });
+
+      // ✅ TUZATILDI: orders:update → order:update (backend bilan mos)
+      socket.on("order:update", (order: any) => {
+        const mapped = mapOrder(order);
+        set((s) => ({
+          orders: s.orders.map((o) => (o.id === mapped.id ? mapped : o)),
+        }));
+      });
     }
   },
 
-  // OLDIN: supabase.auth.signInWithPassword({ email, password })
-  // KEYIN: POST /auth/login → { access_token }
   signIn: async (email, password) => {
     try {
       const { access_token } = await api.post<{ access_token: string }>(
@@ -116,8 +150,6 @@ export const useStore = create<State>()((set, get) => ({
     }
   },
 
-  // OLDIN: supabase.auth.signOut()
-  // KEYIN: tokenni o'chirish
   signOut: async () => {
     localStorage.removeItem("token");
     socket?.disconnect();
@@ -126,8 +158,6 @@ export const useStore = create<State>()((set, get) => ({
   },
 
   // ─── PRODUCTS ────────────────────────────────────────────────────────
-  // OLDIN: supabase.from('products').insert(...)
-  // KEYIN: POST /products
   addProduct: async (p) => {
     try {
       await api.post("/products", {
@@ -143,8 +173,6 @@ export const useStore = create<State>()((set, get) => ({
     }
   },
 
-  // OLDIN: supabase.from('products').update(u).eq('id', id)
-  // KEYIN: PATCH /products/:id
   updateProduct: async (id, patch) => {
     try {
       await api.patch(`/products/${id}`, {
@@ -162,8 +190,6 @@ export const useStore = create<State>()((set, get) => ({
     }
   },
 
-  // OLDIN: supabase.from('products').delete().eq('id', id)
-  // KEYIN: DELETE /products/:id
   deleteProduct: async (id) => {
     try {
       await api.delete(`/products/${id}`);
@@ -173,8 +199,6 @@ export const useStore = create<State>()((set, get) => ({
   },
 
   // ─── COMPUTERS ───────────────────────────────────────────────────────
-  // OLDIN: supabase.from('computers').insert({ number, token })
-  // KEYIN: POST /computers  (token backend da generatsiya qilinadi)
   addComputer: async () => {
     try {
       await api.post("/computers", {});
@@ -183,8 +207,6 @@ export const useStore = create<State>()((set, get) => ({
     }
   },
 
-  // OLDIN: supabase.from('computers').update({ token, token_expires_at }).eq('id', id)
-  // KEYIN: POST /computers/:id/rotate-token
   rotateToken: async (id) => {
     try {
       await api.post(`/computers/${id}/rotate-token`, {});
@@ -193,8 +215,6 @@ export const useStore = create<State>()((set, get) => ({
     }
   },
 
-  // OLDIN: supabase.from('computers').update({ enabled: !c.enabled }).eq('id', id)
-  // KEYIN: PATCH /computers/:id
   toggleComputer: async (id) => {
     const c = get().computers.find((x) => x.id === id);
     if (!c) return;
@@ -205,8 +225,6 @@ export const useStore = create<State>()((set, get) => ({
     }
   },
 
-  // OLDIN: supabase.from('computers').delete().eq('id', id)
-  // KEYIN: DELETE /computers/:id
   deleteComputer: async (id) => {
     try {
       await api.delete(`/computers/${id}`);
@@ -216,19 +234,16 @@ export const useStore = create<State>()((set, get) => ({
   },
 
   // ─── ORDERS ──────────────────────────────────────────────────────────
-  // OLDIN: supabase.from('orders').insert(...) + supabase.from('order_items').insert(...)
-  // KEYIN: POST /orders  (items ham birga yuboriladi)
+  // ✅ TUZATILDI: computerId o'rniga computerNumber yuboriladi
   createOrder: async (computerId, items) => {
     const computer = get().computers.find((c) => c.id === computerId);
     if (!computer?.enabled) return null;
     try {
       const order = await api.post<Order>("/orders", {
-        computerId,
+        computerNumber: computer.number, // ← backend shu fieldni kutadi
         items: items.map((it) => ({
           productId: it.productId || null,
-          name: it.name,
-          price: it.price,
-          quantity: it.quantity,
+          quantity: it.quantity, // ← name/price backend o'zi topadi
         })),
       });
       return mapOrder(order);
@@ -238,11 +253,10 @@ export const useStore = create<State>()((set, get) => ({
     }
   },
 
-  // OLDIN: supabase.from('orders').update({ status }).eq('id', id)
-  // KEYIN: PATCH /orders/:id
+  // ✅ TUZATILDI: /orders/:id/status — to'g'ri endpoint
   setOrderStatus: async (id, status) => {
     try {
-      await api.patch(`/orders/${id}`, { status });
+      await api.patch(`/orders/${id}/status`, { status });
     } catch (e: any) {
       toast.error(e.message);
     }

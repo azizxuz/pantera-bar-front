@@ -1,3 +1,4 @@
+// src/pages/ClientMenu.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -28,9 +29,12 @@ import {
 
 const STORAGE_KEY = "cc_active_computer_token";
 
+// ─── Kompyuter tanlash sahifasi ───────────────────────────────────────────────
+
 const ClientPickComputer = () => {
   const { t } = useTranslation();
   const computers = useStore((s) => s.computers);
+
   return (
     <div className="min-h-screen bg-gradient-hero">
       <div className="absolute inset-0 grid-pattern opacity-30 pointer-events-none" />
@@ -70,6 +74,8 @@ const ClientPickComputer = () => {
   );
 };
 
+// ─── Menyu sahifasi ───────────────────────────────────────────────────────────
+
 const ClientMenu = () => {
   const { t } = useTranslation();
   const { token } = useParams<{ token: string }>();
@@ -80,7 +86,6 @@ const ClientMenu = () => {
   const orders = useStore((s) => s.orders);
   const createOrder = useStore((s) => s.createOrder);
 
-  // ── useMemo bilan filter — infinite loop oldini oladi ──────────────
   const computer = useMemo(
     () => computers.find((c) => c.token === token),
     [computers, token]
@@ -93,14 +98,15 @@ const ClientMenu = () => {
     () => orders.filter((o) => o.computerId === computer?.id).slice(0, 3),
     [orders, computer?.id]
   );
-  // ───────────────────────────────────────────────────────────────────
 
   const [cart, setCart] = useState<Record<string, number>>({});
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (token) localStorage.setItem(STORAGE_KEY, token);
   }, [token]);
 
+  // ─── Invalid / offline holatlari ─────────────────────────────────────
   if (!computer) {
     return (
       <div className="min-h-screen grid place-items-center bg-gradient-hero p-6">
@@ -128,6 +134,7 @@ const ClientMenu = () => {
     );
   }
 
+  // ─── Cart hisob-kitob ─────────────────────────────────────────────────
   const cartItems = Object.entries(cart)
     .map(([id, qty]) => {
       const p = products.find((x) => x.id === id);
@@ -139,8 +146,10 @@ const ClientMenu = () => {
   const total = cartItems.reduce((s, it) => s + it.p.price * it.qty, 0);
   const totalCount = cartItems.reduce((s, it) => s + it.qty, 0);
 
+  // ─── Cart amallar ─────────────────────────────────────────────────────
   const inc = (id: string) =>
     setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
+
   const dec = (id: string) =>
     setCart((c) => {
       const next = (c[id] || 0) - 1;
@@ -150,25 +159,36 @@ const ClientMenu = () => {
       return copy;
     });
 
+  // ✅ TUZATILDI: computer.id to'g'ri uzatiladi, items faqat productId + quantity
   const send = async () => {
-    const items: OrderItem[] = cartItems.map(({ p, qty }) => ({
-      productId: p.id,
-      name: p.name,
-      price: p.price,
-      quantity: qty,
-    }));
-    const order = await createOrder(computer.id, items);
-    if (order) {
-      toast.success(t("client.orderSent"), {
-        description: t("client.orderSentDesc", { n: computer.number }),
-      });
-      setCart({});
+    setSending(true);
+    try {
+      const items: OrderItem[] = cartItems.map(({ p, qty }) => ({
+        productId: p.id,
+        name: p.name, // UI uchun saqlanadi (local state)
+        price: p.price, // UI uchun saqlanadi (local state)
+        quantity: qty,
+      }));
+
+      const order = await createOrder(computer.id, items);
+
+      if (order) {
+        toast.success(t("client.orderSent"), {
+          description: t("client.orderSentDesc", { n: computer.number }),
+        });
+        setCart({});
+      }
+    } finally {
+      setSending(false);
     }
   };
 
+  // ─── Render ───────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-hero pb-32">
       <div className="absolute inset-0 grid-pattern opacity-20 pointer-events-none" />
+
+      {/* Header */}
       <header className="relative z-10 sticky top-0 glass border-b border-border">
         <div className="container flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
@@ -199,10 +219,12 @@ const ClientMenu = () => {
         </div>
       </header>
 
+      {/* Menyu */}
       <main className="relative z-10 container pt-6">
         <h2 className="font-display text-2xl font-bold mb-4">
           {t("client.menu")}
         </h2>
+
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {products.map((p) => {
             const qty = cart[p.id] || 0;
@@ -242,6 +264,7 @@ const ClientMenu = () => {
           })}
         </div>
 
+        {/* So'nggi buyurtmalar */}
         {recent.length > 0 && (
           <div className="mt-10">
             <h3 className="font-display text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
@@ -273,6 +296,7 @@ const ClientMenu = () => {
         )}
       </main>
 
+      {/* Pastki cart panel */}
       {totalCount > 0 && (
         <div className="fixed bottom-0 inset-x-0 z-20 animate-slide-in">
           <div className="container pb-4">
@@ -296,6 +320,7 @@ const ClientMenu = () => {
                   onClear={() => setCart({})}
                   onSend={send}
                   total={total}
+                  sending={sending}
                 />
               </div>
             </Card>
@@ -306,6 +331,8 @@ const ClientMenu = () => {
   );
 };
 
+// ─── Cart Sheet ───────────────────────────────────────────────────────────────
+
 function CartSheet({
   items,
   onInc,
@@ -313,6 +340,7 @@ function CartSheet({
   onClear,
   onSend,
   total,
+  sending,
 }: {
   items: {
     p: { id: string; name: string; price: number; emoji?: string };
@@ -323,12 +351,13 @@ function CartSheet({
   onClear: () => void;
   onSend: () => void;
   total: number;
+  sending: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
-  const send = () => {
-    onSend();
+  const handleSend = async () => {
+    await onSend();
     setOpen(false);
   };
 
@@ -351,6 +380,8 @@ function CartSheet({
             {t("client.cart")}
           </SheetTitle>
         </SheetHeader>
+
+        {/* Items ro'yxati */}
         <div className="flex-1 overflow-y-auto py-4 space-y-2">
           {items.length === 0 && (
             <p className="text-center text-muted-foreground py-8">
@@ -391,6 +422,8 @@ function CartSheet({
             </div>
           ))}
         </div>
+
+        {/* Footer */}
         <div className="border-t border-border pt-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">{t("client.total")}</span>
@@ -399,16 +432,27 @@ function CartSheet({
             </span>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onClear} className="shrink-0">
+            <Button
+              variant="outline"
+              onClick={onClear}
+              className="shrink-0"
+              disabled={sending}
+            >
               <Trash2 className="h-4 w-4" />
             </Button>
             <Button
-              onClick={send}
-              disabled={items.length === 0}
+              onClick={handleSend}
+              disabled={items.length === 0 || sending}
               className="flex-1 bg-gradient-primary text-primary-foreground shadow-glow h-12"
             >
-              <Check className="mr-2 h-5 w-5" />
-              {t("client.sendOrder")}
+              {sending ? (
+                <span className="animate-pulse">{t("client.sending")}…</span>
+              ) : (
+                <>
+                  <Check className="mr-2 h-5 w-5" />
+                  {t("client.sendOrder")}
+                </>
+              )}
             </Button>
           </div>
         </div>
